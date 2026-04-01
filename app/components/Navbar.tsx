@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: '/scorecard', label: '🏆 Scorecards',  roles: ['mill', 'brand'] },
   { href: '/create',    label: 'Create PO',       roles: ['mill'] },
   { href: '/scan',      label: 'Scan Rolls',      roles: ['mill', 'worker'] },
+  { href: '/factory',   label: '🏗️ Factory Floor', roles: ['mill'] },
   { href: '/worker',    label: '📱 Worker App',   roles: ['mill', 'worker'] },
 ];
 
