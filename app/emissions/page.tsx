@@ -137,7 +137,11 @@ const TRANSPORT_LABELS: Record<string, string> = {
 export default function EmissionsPage() {
   const router = useRouter();
   const [data, setData] = useState<RollEmissions[]>([]);
-  const [whatIfMode, setWhatIfMode] = useState(false);
+  const [whatIfMode, setWhatIfMode] = useState(true);
+  // What-If slider state (must sum to 100)
+  const [wfSea,   setWfSea]   = useState(60);
+  const [wfAir,   setWfAir]   = useState(20);
+  const [wfTruck, setWfTruck] = useState(20);
 
   useEffect(() => {
     const user = getDemoUser();
@@ -320,47 +324,248 @@ export default function EmissionsPage() {
           </div>
         </div>
 
-        {/* What-If Calculator */}
-        <div style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.06), rgba(16,185,129,0.03))', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 14, padding: '1.5rem', marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: whatIfMode ? '1.5rem' : 0, flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <div style={{ fontSize: '1rem', fontWeight: 700, color: '#f9fafb', marginBottom: '0.2rem' }}>💡 What-If Scenario: Switch Air → Sea</div>
-              <div style={{ fontSize: '0.82rem', color: '#6b7280' }}>
-                See exactly what you'd save if your {airRolls.length} air freight rolls were shipped by sea instead
-              </div>
-            </div>
-            <button
-              onClick={() => setWhatIfMode(!whatIfMode)}
-              style={{ padding: '0.5rem 1.1rem', background: '#22c55e', color: '#000', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer' }}
-            >
-              {whatIfMode ? 'Hide' : 'Run Scenario →'}
-            </button>
-          </div>
+        {/* ── Enhanced Interactive What-If Calculator ── */}
+        {(() => {
+          // Scenario calculations
+          const totalKmWeight = data.reduce((a, d) =>
+            a + (d.roll.transportKm || 13200) * ((d.roll.weightKg || 70) / 1000), 0);
+          const scenarioFactor = (wfSea * FACTORS.sea + wfAir * FACTORS.air + wfTruck * FACTORS.truck) / 100;
+          const scenarioTransportCO2 = scenarioFactor * totalKmWeight;
+          const co2Saved = totalTransport - scenarioTransportCO2;
+          const pctSaved = totalCO2 > 0 ? (co2Saved / totalCO2) * 100 : 0;
+          const treesEq = Math.max(0, Math.round(co2Saved / 21));
+          const freightSave = Math.max(0, Math.round(
+            (wfAir / 100) < (data.filter(d => d.roll.transport === 'air').length / data.length)
+              ? (data.filter(d => d.roll.transport === 'air').length - Math.round(data.length * wfAir / 100)) * 1200
+              : 0
+          ));
+          const totalSlider = wfSea + wfAir + wfTruck;
 
-          {whatIfMode && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-              {[
-                { label: 'CO₂ Saved', value: `${(airSaving / 1000).toFixed(2)} tonnes`, sub: 'per quarter', color: '#22c55e', icon: '🌿' },
-                { label: 'Equivalent Trees', value: `${Math.round(airSaving / 21).toLocaleString()}`, sub: 'planted & grown 10 years', color: '#4ade80', icon: '🌳' },
-                { label: 'CO₂ Reduction', value: `${(airSaving / totalCO2 * 100).toFixed(0)}%`, sub: 'of total quarterly emissions', color: '#a78bfa', icon: '📉' },
-                { label: 'Freight Cost Save', value: `~$${(airRolls.length * 1200).toLocaleString()}`, sub: 'air vs sea cost difference', color: '#f59e0b', icon: '💰' },
-              ].map(s => (
-                <div key={s.label} style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: '1rem', border: `1px solid ${s.color}22` }}>
-                  <div style={{ fontSize: '1.5rem', marginBottom: '0.4rem' }}>{s.icon}</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#e5e7eb', fontWeight: 600, marginTop: '0.2rem' }}>{s.label}</div>
-                  <div style={{ fontSize: '0.68rem', color: '#4b5563' }}>{s.sub}</div>
+          // Slider handler: adjusting one mode proportionally redistributes the others
+          function handleSlider(mode: 'sea' | 'air' | 'truck', val: number) {
+            const clamped = Math.min(100, Math.max(0, val));
+            const remainder = 100 - clamped;
+            if (mode === 'sea') {
+              const tot = wfAir + wfTruck || 1;
+              setWfSea(clamped);
+              setWfAir(Math.round((wfAir / tot) * remainder));
+              setWfTruck(remainder - Math.round((wfAir / tot) * remainder));
+            } else if (mode === 'air') {
+              const tot = wfSea + wfTruck || 1;
+              setWfAir(clamped);
+              setWfSea(Math.round((wfSea / tot) * remainder));
+              setWfTruck(remainder - Math.round((wfSea / tot) * remainder));
+            } else {
+              const tot = wfSea + wfAir || 1;
+              setWfTruck(clamped);
+              setWfSea(Math.round((wfSea / tot) * remainder));
+              setWfAir(remainder - Math.round((wfSea / tot) * remainder));
+            }
+          }
+
+          // Actual current mix %
+          const actualTotal = byMode.sea + byMode.air + byMode.truck || 1;
+          const actualSeaPct   = Math.round((byMode.sea   / actualTotal) * 100);
+          const actualAirPct   = Math.round((byMode.air   / actualTotal) * 100);
+          const actualTruckPct = Math.round((byMode.truck / actualTotal) * 100);
+
+          const SLIDER_COLORS = { sea: '#38bdf8', air: '#f97316', truck: '#facc15' };
+          const SLIDER_LABELS = { sea: '🚢 Sea Freight', air: '✈️ Air Freight', truck: '🚛 Road / Truck' };
+
+          return (
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(34,197,94,0.05), rgba(16,185,129,0.02))',
+              border: '1px solid rgba(34,197,94,0.2)',
+              borderRadius: 16, padding: '1.5rem', marginBottom: '1.25rem',
+            }}>
+              {/* Header */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '1rem', fontWeight: 700, color: '#f9fafb' }}>💡 What-If Scenario Calculator</span>
+                    <span style={{
+                      fontSize: '0.6rem', fontWeight: 700, color: '#22c55e',
+                      background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+                      borderRadius: 99, padding: '0.15rem 0.5rem', letterSpacing: '0.06em',
+                    }}>LIVE</span>
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                    Drag the sliders to model any transport mix — CO₂ savings update instantly
+                  </div>
                 </div>
-              ))}
-              <div style={{ gridColumn: '1 / -1', padding: '0.75rem 1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 8 }}>
-                <div style={{ fontSize: '0.82rem', color: '#22c55e', fontWeight: 600 }}>
-                  ✓ Air freight emits <strong>{(FACTORS.air / FACTORS.sea).toFixed(0)}× more CO₂ per tonne-km</strong> than sea freight.
-                  Switching {airRolls.length} rolls from air to sea on PO-2026-001 would reduce that shipment's carbon footprint by {(airSaving / (airRolls.reduce((a, d) => a + d.totalCO2, 0)) * 100).toFixed(0)}%.
+                {/* Reset button */}
+                <button
+                  onClick={() => { setWfSea(actualSeaPct); setWfAir(actualAirPct); setWfTruck(actualTruckPct); }}
+                  style={{
+                    padding: '0.35rem 0.85rem', background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+                    color: '#9ca3af', fontSize: '0.75rem', cursor: 'pointer',
+                  }}
+                >↺ Reset to actual</button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.1fr) minmax(0,0.9fr)', gap: '2rem' }}>
+
+                {/* LEFT — Sliders */}
+                <div>
+                  <div style={{ fontSize: '0.68rem', color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600, marginBottom: '1rem' }}>
+                    Scenario transport mix
+                  </div>
+
+                  {(['sea', 'air', 'truck'] as const).map(mode => (
+                    <div key={mode} style={{ marginBottom: '1.2rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div style={{ width: 10, height: 10, borderRadius: '50%', background: SLIDER_COLORS[mode], flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.82rem', color: '#e5e7eb', fontWeight: 500 }}>{SLIDER_LABELS[mode]}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.68rem', color: '#4b5563' }}>
+                            was {mode === 'sea' ? actualSeaPct : mode === 'air' ? actualAirPct : actualTruckPct}%
+                          </span>
+                          <span style={{
+                            fontSize: '0.9rem', fontWeight: 800,
+                            color: SLIDER_COLORS[mode], minWidth: 42, textAlign: 'right',
+                          }}>
+                            {mode === 'sea' ? wfSea : mode === 'air' ? wfAir : wfTruck}%
+                          </span>
+                        </div>
+                      </div>
+                      <input
+                        type="range" min={0} max={100}
+                        value={mode === 'sea' ? wfSea : mode === 'air' ? wfAir : wfTruck}
+                        onChange={e => handleSlider(mode, Number(e.target.value))}
+                        style={{ width: '100%', accentColor: SLIDER_COLORS[mode], cursor: 'pointer', height: 4 }}
+                      />
+                      {/* Mini bar showing scenario vs actual */}
+                      <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.3rem' }}>
+                        <div style={{ flex: 1, height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%', borderRadius: 99,
+                            background: SLIDER_COLORS[mode] + '60',
+                            width: `${mode === 'sea' ? actualSeaPct : mode === 'air' ? actualAirPct : actualTruckPct}%`,
+                          }} />
+                        </div>
+                        <div style={{ flex: 1, height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%', borderRadius: 99,
+                            background: SLIDER_COLORS[mode],
+                            width: `${mode === 'sea' ? wfSea : mode === 'air' ? wfAir : wfTruck}%`,
+                            transition: 'width 0.2s',
+                          }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6rem', color: '#374151', marginTop: '0.15rem' }}>
+                        <span>actual</span><span>scenario</span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Total indicator */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '0.5rem 0.75rem', borderRadius: 8, marginTop: '0.25rem',
+                    background: totalSlider === 100 ? 'rgba(34,197,94,0.07)' : 'rgba(239,68,68,0.07)',
+                    border: `1px solid ${totalSlider === 100 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                  }}>
+                    <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Mix total</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: totalSlider === 100 ? '#22c55e' : '#ef4444' }}>
+                      {totalSlider}% {totalSlider === 100 ? '✓' : '— adjust sliders'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* RIGHT — Live results */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ fontSize: '0.68rem', color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
+                    Impact of this scenario
+                  </div>
+
+                  {/* Big CO₂ saved number */}
+                  <div style={{
+                    background: co2Saved > 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${co2Saved > 0 ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                    borderRadius: 12, padding: '1rem', textAlign: 'center',
+                  }}>
+                    <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: '0.25rem' }}>
+                      {co2Saved >= 0 ? 'CO₂ Saved vs. current' : 'CO₂ Added vs. current'}
+                    </div>
+                    <div style={{ fontSize: '2rem', fontWeight: 900, lineHeight: 1, color: co2Saved >= 0 ? '#22c55e' : '#ef4444', letterSpacing: '-0.03em' }}>
+                      {co2Saved >= 0 ? '' : '+'}{Math.abs(co2Saved) >= 1000
+                        ? `${(Math.abs(co2Saved) / 1000).toFixed(2)}t`
+                        : `${Math.abs(co2Saved).toFixed(1)} kg`}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: co2Saved >= 0 ? '#22c55e' : '#ef4444', marginTop: '0.2rem' }}>
+                      {Math.abs(pctSaved).toFixed(1)}% {co2Saved >= 0 ? 'reduction' : 'increase'}
+                    </div>
+                  </div>
+
+                  {/* Current vs Scenario comparison bar */}
+                  <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '0.85rem' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#4b5563', marginBottom: '0.6rem' }}>Current vs Scenario</div>
+                    <div style={{ marginBottom: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#9ca3af', marginBottom: '0.2rem' }}>
+                        <span>Current</span>
+                        <span style={{ color: '#f97316' }}>{totalTransport.toFixed(1)} kg</span>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                        <div style={{ width: '100%', height: '100%', background: 'linear-gradient(90deg, #38bdf8, #f97316, #facc15)', borderRadius: 99 }} />
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#9ca3af', marginBottom: '0.2rem' }}>
+                        <span>Scenario</span>
+                        <span style={{ color: co2Saved >= 0 ? '#22c55e' : '#ef4444' }}>{scenarioTransportCO2.toFixed(1)} kg</span>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                        <div style={{
+                          width: `${Math.min(100, (scenarioTransportCO2 / totalTransport) * 100)}%`,
+                          height: '100%',
+                          background: co2Saved >= 0 ? '#22c55e' : '#ef4444',
+                          borderRadius: 99, transition: 'width 0.3s ease',
+                        }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Equivalent metrics */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    {[
+                      { icon: '🌳', val: treesEq.toLocaleString(), label: 'trees equiv.', color: '#4ade80', show: co2Saved > 0 },
+                      { icon: '💰', val: `$${(data.filter(d=>d.roll.transport==='air').length * Math.max(0,(wfAir/100 < data.filter(d=>d.roll.transport==='air').length/data.length ? 1 : 0)) * 1200).toLocaleString()}`, label: 'freight saved', color: '#f59e0b', show: co2Saved > 0 },
+                      { icon: '🏭', val: `${Math.abs(pctSaved).toFixed(0)}%`, label: co2Saved >= 0 ? 'less CO₂' : 'more CO₂', color: co2Saved >= 0 ? '#22c55e' : '#ef4444', show: true },
+                      { icon: '📋', val: totalSlider === 100 ? 'Valid' : 'Adjust', label: 'scenario status', color: totalSlider === 100 ? '#22c55e' : '#ef4444', show: true },
+                    ].map(m => (
+                      <div key={m.label} style={{
+                        background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                        borderRadius: 8, padding: '0.6rem 0.7rem', textAlign: 'center',
+                      }}>
+                        <div style={{ fontSize: '1rem' }}>{m.icon}</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: m.color, lineHeight: 1 }}>{m.val}</div>
+                        <div style={{ fontSize: '0.6rem', color: '#4b5563', marginTop: '0.15rem' }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Insight line */}
+                  {totalSlider === 100 && (
+                    <div style={{
+                      padding: '0.65rem 0.85rem', borderRadius: 8,
+                      background: co2Saved > 0 ? 'rgba(34,197,94,0.07)' : 'rgba(239,68,68,0.07)',
+                      border: `1px solid ${co2Saved > 0 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                      fontSize: '0.75rem',
+                      color: co2Saved > 0 ? '#22c55e' : '#ef4444',
+                    }}>
+                      {co2Saved > 0
+                        ? `✓ This mix saves ${(co2Saved).toFixed(1)} kg CO₂ — equivalent to planting ${treesEq} trees.`
+                        : `⚠ This mix increases emissions by ${Math.abs(co2Saved).toFixed(1)} kg CO₂ vs. your current mix.`}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* Roll-level breakdown table */}
         <div style={{ background: '#111827', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 14, overflow: 'hidden' }}>
